@@ -1,0 +1,262 @@
+diff --git a/scripts/src/bus.lua b/scripts/src/bus.lua
+index 702338554b2..c1738304160 100644
+--- a/scripts/src/bus.lua
++++ b/scripts/src/bus.lua
+@@ -3634,6 +3634,8 @@ if BUSES["MULTIBUS"] then
+ 		MAME_DIR .. "src/devices/bus/multibus/cpuap.h",
+ 		MAME_DIR .. "src/devices/bus/multibus/serad.cpp",
+ 		MAME_DIR .. "src/devices/bus/multibus/serad.h",
++		MAME_DIR .. "src/devices/bus/multibus/storager.cpp",
++		MAME_DIR .. "src/devices/bus/multibus/storager.h",
+ 		MAME_DIR .. "src/devices/bus/multibus/labtam_3232.cpp",
+ 		MAME_DIR .. "src/devices/bus/multibus/labtam_3232.h",
+ 		MAME_DIR .. "src/devices/bus/multibus/labtam_vducom.cpp",
+diff --git a/src/devices/bus/multibus/cpuap.h b/src/devices/bus/multibus/cpuap.h
+index 340d7a94c42..dbb9edc4ed4 100644
+--- a/src/devices/bus/multibus/cpuap.h
++++ b/src/devices/bus/multibus/cpuap.h
+@@ -1,5 +1,5 @@
+ // license:BSD-3-Clause
+-// copyright-holders:Patrick Mackinlay
++// copyright-holders:Patrick Mackinlay, Dave Rand
+ 
+ #ifndef MAME_BUS_MULTIBUS_CPUAP_H
+ #define MAME_BUS_MULTIBUS_CPUAP_H
+@@ -13,6 +13,9 @@
+ #include "machine/ns32082.h"
+ #include "machine/ns32202.h"
+ #include "machine/mc146818.h"
++#include "machine/mc68681.h"
++
++#include "bus/rs232/rs232.h"
+ 
+ 
+ class cpuap_device
+@@ -44,13 +47,18 @@ private:
+ 	required_device<ns32082_device> m_mmu;
+ 	required_device<ns32202_device> m_icu;
+ 	required_device<mc146818_device> m_rtc;
++	required_device<scn2681_device> m_csuart;
++	required_device<rs232_port_device> m_diag;
+ 	required_ioport m_s7;
+ 	required_ioport m_s8;
+ 	memory_view m_boot;
++	memory_share_creator<u16> m_ram;
++	std::unique_ptr<u16[]> m_ramext;
+ 
+ 	u8 m_prdia;
+ 	u8 m_poff;
+ 	u8 m_nmi;
++	bool m_installed;
+ };
+ 
+ DECLARE_DEVICE_TYPE(CPUAP, cpuap_device)
+diff --git a/src/devices/bus/multibus/serad.cpp b/src/devices/bus/multibus/serad.cpp
+index 783bdf4e9fd..41cbde82eea 100644
+--- a/src/devices/bus/multibus/serad.cpp
++++ b/src/devices/bus/multibus/serad.cpp
+@@ -99,6 +99,14 @@ static INPUT_PORTS_START(serad)
+ 	PORT_DIPSETTING(0x80, "7")
+ INPUT_PORTS_END
+ 
++static DEVICE_INPUT_DEFAULTS_START(console_defaults)
++	DEVICE_INPUT_DEFAULTS("RS232_TXBAUD", 0xff, RS232_BAUD_38400)
++	DEVICE_INPUT_DEFAULTS("RS232_RXBAUD", 0xff, RS232_BAUD_38400)
++	DEVICE_INPUT_DEFAULTS("RS232_DATABITS", 0xff, RS232_DATABITS_7)
++	DEVICE_INPUT_DEFAULTS("RS232_PARITY", 0xff, RS232_PARITY_ODD)
++	DEVICE_INPUT_DEFAULTS("RS232_STOPBITS", 0xff, RS232_STOPBITS_1)
++DEVICE_INPUT_DEFAULTS_END
++
+ const tiny_rom_entry *serad_device::device_rom_region() const
+ {
+ 	return ROM_NAME(serad);
+@@ -448,7 +456,10 @@ void serad_device::device_add_mconfig(machine_config &config)
+ 	m_duart[1]->irq_cb().set(m_rst65, FUNC(input_merger_any_high_device::in_w<1>));
+ 	m_duart[2]->irq_cb().set(m_rst65, FUNC(input_merger_any_high_device::in_w<2>));
+ 
+-	RS232_PORT(config, m_port[0], default_rs232_devices, "s97801"); // SS97: port 0 is the system console; a 97801 terminal is the standard fit
++	RS232_PORT(config, m_port[0], default_rs232_devices, nullptr);
++	m_port[0]->set_option_device_input_defaults("pty", DEVICE_INPUT_DEFAULTS_NAME(console_defaults));
++	m_port[0]->set_option_device_input_defaults("null_modem", DEVICE_INPUT_DEFAULTS_NAME(console_defaults));
++	m_port[0]->set_option_device_input_defaults("terminal", DEVICE_INPUT_DEFAULTS_NAME(console_defaults)); // was "s97801" (device lives on the s97801-terminal branch; we drive a pty) // SS97: port 0 is the system console; a 97801 terminal is the standard fit
+ 	m_port[0]->set_option_device_input_defaults("null_modem", DEVICE_INPUT_DEFAULTS_NAME(ss97_defaults));
+ 	m_port[0]->set_option_device_input_defaults("terminal", DEVICE_INPUT_DEFAULTS_NAME(ss97_defaults));
+ 	m_port[0]->set_option_device_input_defaults("pty", DEVICE_INPUT_DEFAULTS_NAME(ss97_defaults));
+diff --git a/src/devices/bus/multibus/serad.h b/src/devices/bus/multibus/serad.h
+index 6df233dda34..2d9d04d8b72 100644
+--- a/src/devices/bus/multibus/serad.h
++++ b/src/devices/bus/multibus/serad.h
+@@ -1,5 +1,5 @@
+ // license:BSD-3-Clause
+-// copyright-holders:Patrick Mackinlay
++// copyright-holders:Patrick Mackinlay, Dave Rand
+ 
+ #ifndef MAME_BUS_MULTIBUS_SERAD_H
+ #define MAME_BUS_MULTIBUS_SERAD_H
+@@ -13,6 +13,19 @@
+ #include "machine/input_merger.h"
+ #include "bus/rs232/rs232.h"
+ 
++// Board-specific SCN2681: CSR select 0xD routes the counter/timer output to the channel's
++// 16x clock, so the internal bit-rate generator must be disabled for that selection.
++class serad_scn2681_device : public scn2681_device
++{
++public:
++	serad_scn2681_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock);
++
++protected:
++	virtual int calc_baud(int ch, bool rx, uint8_t data) override;
++};
++
++DECLARE_DEVICE_TYPE(SERAD_SCN2681, serad_scn2681_device)
++
+ class serad_device
+ 	: public device_t
+ 	, public device_multibus_interface
+@@ -35,13 +48,42 @@ private:
+ 	template <unsigned S> void rst55_w(u8 data) { m_cpu->set_input_line(I8085_RST55_LINE, S); }
+ 	void apzint_w(u8 data) { int_w(2, 0); }
+ 
++	// host mailbox write, deferred while the firmware holds the Multibus lock
++	void mbx_w(offs_t offset, u16 data, u16 mem_mask);
++	template <bool Lock> void buslock_w(u8 data);
++
++	// host-side Multibus interrupt strobe (strap-selected S9-S16), released after the latch width
++	void hostint_w(u8 data);
++	void hostint_ack();
++	TIMER_CALLBACK_MEMBER(hostint_release);
++
++	// TEMP (STRIP) probes carried by the storager-lle branch
++	TIMER_CALLBACK_MEMBER(kick_test);
++	TIMER_CALLBACK_MEMBER(mbx_dump);
++	TIMER_CALLBACK_MEMBER(cts_probe);
++	TIMER_CALLBACK_MEMBER(ch0cfg_probe);
++
+ 	required_device<i8085a_cpu_device> m_cpu;
+ 	required_shared_ptr<u8> m_mbx;
+ 	required_device<input_merger_any_high_device> m_rst65;
+-	required_device_array<scn2681_device, 3> m_duart;
++	required_device_array<serad_scn2681_device, 3> m_duart;
+ 	required_device_array<rs232_port_device, 6> m_port;
+ 
+ 	bool m_installed;
++
++	// Multibus lock: host mailbox writes arriving while the fw holds the lock are queued
++	// and replayed in order on unlock.
++	bool m_buslock = false;
++	u32 m_lockpend[64][3] = { };
++	u8 m_lockpend_n = 0;
++
++	emu_timer *m_hostint_rel = nullptr;
++	bool m_hostint_held = false;
++
++	emu_timer *m_kick = nullptr;
++	emu_timer *m_dump = nullptr;
++	emu_timer *m_cts = nullptr;
++	int m_cts_dcd = 0;
+ };
+ 
+ DECLARE_DEVICE_TYPE(SERAD, serad_device)
+diff --git a/src/devices/bus/multibus/storager.cpp b/src/devices/bus/multibus/storager.cpp
+index 42149fa75ef..a3346c92ef9 100644
+--- a/src/devices/bus/multibus/storager.cpp
++++ b/src/devices/bus/multibus/storager.cpp
+@@ -5668,6 +5668,15 @@ void multibus_storager_device::floppy_swap_cb(floppy_image_device *)
+ 
+ void multibus_storager_device::device_start()
+ {
++	// A media swap invalidates the cached density/geometry probe: the SINIX installer
++	// prompts for the next diskette mid-run, and the new medium may differ.
++	for (int i = 0; i < 2; i++)
++		if (floppy_image_device *const fdd = m_floppy[i]->get_device())
++		{
++			fdd->setup_load_cb(floppy_image_device::load_cb(&multibus_storager_device::floppy_swap_cb, this));
++			fdd->setup_unload_cb(floppy_image_device::unload_cb(&multibus_storager_device::floppy_swap_cb, this));
++		}
++
+ 	m_lram = std::make_unique<u16[]>(0x2000);
+ 	save_pointer(NAME(m_lram), 0x2000);
+ 	save_item(NAME(m_ch));
+diff --git a/src/devices/cpu/ns32000/ns32000.h b/src/devices/cpu/ns32000/ns32000.h
+index 1de753c1751..0567c8d6530 100644
+--- a/src/devices/cpu/ns32000/ns32000.h
++++ b/src/devices/cpu/ns32000/ns32000.h
+@@ -14,6 +14,7 @@ class ns32000_device : public cpu_device
+ public:
+ 	template <typename T> void set_fpu(T &&tag) { m_fpu.set_tag(std::forward<T>(tag)); }
+ 	template <typename T> void set_mmu(T &&tag) { m_mmu.set_tag(std::forward<T>(tag)); }
++	void set_wait_states(unsigned n) { m_wait_states = n; }   // extra cycles charged per bus cycle (board DRAM/BFCLK)
+ 
+ 	void rdy_w(int state) { m_ready = !state; }
+ 
+@@ -80,7 +81,7 @@ protected:
+ 		// number of bus cycles required for the transfer
+ 		unsigned const n = (bytes + (address & (bpt - 1)) + (bpt - 1)) >> Width;
+ 
+-		return 3 + (n - 1) * 4 + n * tmmu;
++		return 3 + (n - 1) * 4 + n * tmmu + n * m_wait_states;
+ 	}
+ 
+ 	struct addr_mode
+@@ -199,6 +200,7 @@ private:
+ 	bool m_nmi_line;
+ 	bool m_int_line;
+ 	bool m_wait;
++	unsigned m_wait_states = 0;
+ 	bool m_sequential;
+ 	bool m_ready;
+ 	bool m_cg16;   // NS32CG16 graphics-instruction variant enabled
+diff --git a/src/devices/imagedev/floppy.h b/src/devices/imagedev/floppy.h
+index 6e02ac59cd4..de0b3116bf1 100644
+--- a/src/devices/imagedev/floppy.h
++++ b/src/devices/imagedev/floppy.h
+@@ -310,6 +310,7 @@ public:
+ 
+ 	int get_cyl() const { return m_cyl; }
+ 	bool on_track() const { return !m_subcyl; }
++	floppy_image *get_image() const { return m_image.get(); } // for HLE controllers that read the mounted image directly
+ 
+ 	virtual void mon_w(int state);
+ 	bool ready_r();
+diff --git a/src/devices/machine/mc68681.h b/src/devices/machine/mc68681.h
+index d5476e822c2..7a11e106c8c 100644
+--- a/src/devices/machine/mc68681.h
++++ b/src/devices/machine/mc68681.h
+@@ -171,7 +171,9 @@ private:
+ 	uint32_t get_ct_rate();
+ 	uint16_t get_ct_count();
+ 	void start_ct(int count);
++protected:
+ 	virtual int calc_baud(int ch, bool rx, uint8_t data);
++private:
+ 	void clear_ISR_bits(int mask);
+ 	void set_ISR_bits(int mask);
+ 
+diff --git a/src/mame/siemens/pcmx2.cpp b/src/mame/siemens/pcmx2.cpp
+index c603d9669ff..616a2c66046 100644
+--- a/src/mame/siemens/pcmx2.cpp
++++ b/src/mame/siemens/pcmx2.cpp
+@@ -28,6 +28,7 @@
+ #include "bus/multibus/cpuap.h"
+ //#include "bus/multibus/dueai.h"
+ #include "bus/multibus/serad.h"
++#include "bus/multibus/storager.h"
+ 
+ #define VERBOSE 0
+ #include "logmacro.h"
+@@ -69,13 +70,14 @@ static void pcmx2_cards(device_slot_interface &device)
+ 	device.option_add("cpuap", CPUAP);
+ 	//device.option_add("dueai", DUEAI);
+ 	device.option_add("serad", SERAD);
++	device.option_add("storager", MULTIBUS_STORAGER);
+ }
+ 
+ void pcmx2_state::pcmx2(machine_config &config)
+ {
+ 	MULTIBUS(config, m_bus, 20_MHz_XTAL / 2);
+ 
+-	MULTIBUS_SLOT(config, "slot1", m_bus, pcmx2_cards, nullptr, false); // DTC 86-1 or Storager
++	MULTIBUS_SLOT(config, "slot1", m_bus, pcmx2_cards, "storager", false); // Interphase Storager (disk/tape/floppy)
+ 	MULTIBUS_SLOT(config, "slot2", m_bus, pcmx2_cards, nullptr, false);
+ 	MULTIBUS_SLOT(config, "slot3", m_bus, pcmx2_cards, "serad", false);
+ 	MULTIBUS_SLOT(config, "slot4", m_bus, pcmx2_cards, nullptr, false);

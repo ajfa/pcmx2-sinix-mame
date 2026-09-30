@@ -1,0 +1,40 @@
+diff --git a/src/devices/bus/multibus/storager.cpp b/src/devices/bus/multibus/storager.cpp
+index a3346c92ef9..ebc95b0b997 100644
+--- a/src/devices/bus/multibus/storager.cpp
++++ b/src/devices/bus/multibus/storager.cpp
+@@ -2794,6 +2794,35 @@ void multibus_storager_device::advance_read()
+ 				}
+ 			}
+ 		}
++		else if (!m_first_chunk)
++		{
++			// Floppy, first field of a command.  Only deposit once the firmware's setup IRQ5 has set
++			// the [$7950] alternator for the done IRQ5: a done taken with it clear is routed to setup
++			// again, the sector is never delivered and the next one lands in its host slot (the read
++			// comes up one sector short and times out with sense $1c).  The first setup of a command
++			// does not always set it (measured: when the verify IRQ6 finds a chunk still allocated
++			// from the previous command), so skip and let the record come round again; the next
++			// setup does.  With the bit set the current chunk is C800[0]; if the verify path has not
++			// published it yet (empty), use [$741e], where setup just popped it.
++			address_space &fs = m_cpu->space(AS_PROGRAM);
++			u32 const armed = u32(fs.read_word(0x741e)) << 1;
++			if (BIT(fs.read_word(0x7950), 0))
++			{
++				if (c800_ok)
++					place = c800_place;
++				else if (armed >= 0x4000 && armed + flen <= 0x8000 && flen <= s.len)
++				{
++					place = armed;
++					logerror("FIELD r=%02x C800 empty, firmware armed [$741e] -> chunk %04x t=%.5f\n",
++						s.r, armed, machine().time().as_double());
++				}
++				if (place)
++					place_how = "arm";
++			}
++			else
++				logerror("FIELD r=%02x first field before setup armed the done ([$7950]=0), retry t=%.5f\n",
++					s.r, machine().time().as_double());
++		}
+ 		else if (c800_ok)
+ 		{
+ 			place = c800_place;

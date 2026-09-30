@@ -1,0 +1,10 @@
+diff --git a/src/mame/siemens/pcmx2.cpp b/src/mame/siemens/pcmx2.cpp
+index 616a2c66046..0332961a040 100644
+--- a/src/mame/siemens/pcmx2.cpp
++++ b/src/mame/siemens/pcmx2.cpp
+@@ -93,4 +93,4 @@ ROM_END
+ }
+ 
+ /*   YEAR   NAME   PARENT  COMPAT  MACHINE  INPUT  CLASS        INIT        COMPANY    FULLNAME  FLAGS */
+-COMP(1985,  pcmx2, 0,      0,      pcmx2,   0,     pcmx2_state, empty_init, "Siemens", "PC-MX2", MACHINE_NOT_WORKING | MACHINE_NO_SOUND_HW)
++COMP(1985,  pcmx2, 0,      0,      pcmx2,   0,     pcmx2_state, empty_init, "Siemens", "PC-MX2", MACHINE_NO_SOUND_HW)

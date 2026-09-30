@@ -1,0 +1,52 @@
+diff --git a/src/devices/machine/ns32202.cpp b/src/devices/machine/ns32202.cpp
+index 6cbf685e3f2..f6858a2d28a 100644
+--- a/src/devices/machine/ns32202.cpp
++++ b/src/devices/machine/ns32202.cpp
+@@ -68,6 +68,7 @@ ns32202_device::ns32202_device(machine_config const &mconfig, char const *tag, d
+ 	, m_out_cout(*this)
+ 	, m_out_g(*this)
+ 	, m_hvct(0)
++	, m_vector(0x0f)
+ 	, m_pdat(0)
+ 	, m_cctl(0)
+ 	, m_csv{}
+@@ -83,6 +84,7 @@ ns32202_device::ns32202_device(machine_config const &mconfig, char const *tag, d
+ void ns32202_device::device_start()
+ {
+ 	save_item(NAME(m_hvct));
++	save_item(NAME(m_vector));
+ 	save_item(NAME(m_eltg));
+ 	save_item(NAME(m_tpl));
+ 	save_item(NAME(m_ipnd));
+@@ -607,7 +609,18 @@ template <unsigned N> void ns32202_device::counter(s32 param)
+ 
+ template <unsigned ST1, bool SideEffects> u8 ns32202_device::hvct_r()
+ {
+-	u8 data = ST1 ? interrupt_return(SideEffects) : interrupt_acknowledge(SideEffects);
++	// HVCT/SVCT bits 3-0 encode the interrupt being serviced, fixed by the acknowledge or return
++	// cycle; SVCT returns the same without side effects.  Recomputing it on an SVCT read yields
++	// the next pending interrupt instead (usually none, since acknowledge clears an edge-triggered
++	// pending bit), and handlers that read SVCT to identify their source dispatch as vector 15.
++	u8 data;
++	if (SideEffects)
++	{
++		data = ST1 ? interrupt_return(true) : interrupt_acknowledge(true);
++		m_vector = data & 0x0f;
++	}
++	else
++		data = (m_hvct & 0xf0) | m_vector;
+ 	LOGMASKED(LOG_REGR, "%cvct_r 0x%02x%s (%s)\n",
+ 		SideEffects ? 'h' : 's', data, SideEffects ? (ST1 ? " interrupt return" : " interrupt acknowledge") : "", machine().describe_context());
+ 
+diff --git a/src/devices/machine/ns32202.h b/src/devices/machine/ns32202.h
+index c5e7c27e35f..c128267c58c 100644
+--- a/src/devices/machine/ns32202.h
++++ b/src/devices/machine/ns32202.h
+@@ -108,6 +108,7 @@ private:
+ 	emu_timer *m_counter[2];
+ 
+ 	u8 m_hvct;    // hardware vector
++	u8 m_vector;  // vector latched by the last acknowledge/return cycle
+ 	u16 m_eltg;   // edge/level triggering (1=level)
+ 	u16 m_tpl;    // triggering polarity (1=active high)
+ 	u16 m_ipnd;   // interrupts pending (1=pending)

@@ -1,0 +1,21 @@
+diff --git a/src/devices/bus/multibus/storager.cpp b/src/devices/bus/multibus/storager.cpp
+index ebc95b0b997..1148cfa796c 100644
+--- a/src/devices/bus/multibus/storager.cpp
++++ b/src/devices/bus/multibus/storager.cpp
+@@ -2577,6 +2577,16 @@ void multibus_storager_device::advance_read()
+ 		m_next_rec = machine().time() + sector_period();
+ 		return;
+ 	}
++	// Floppy: while the firmware's track sequencer is parked in its seek/settle wait
++	// ([$7a60] == 1, polling $6bc2 from $9492) it has not started the track yet.  Presenting
++	// records now lets the whole track complete inside the wait, so the track-end that would
++	// advance to the next cylinder is consumed as one more settle poll and the multi-track
++	// read stalls.  The disk keeps turning; start no new record until the wait is over.
++	if (!m_rigid_track && m_sec_phase == 0 && m_cpu->space(AS_PROGRAM).read_word(0x7a60) == 1)
++	{
++		m_next_rec = machine().time() + sector_period();
++		return;
++	}
+ 	if (m_sec_index < 0 || m_sec_index >= m_track_n)
+ 		m_sec_index = 0;
+ 	captured_sector const &s = m_track[m_sec_index];   // physical order = ascending R for the boot read
