@@ -88,6 +88,24 @@ Fix: read it with the restored PSR (`mem_read<u32>(ST_ODT, mod, psr & PSR_U)`). 
 the installer comes up (`INSTALLATION EINES SINIX-SYSTEMS`), offers
 `RO202E / MC1303 / MC1323 / MC1325` and formats the disk.
 
+## 5. Random disk errors under memory pressure (patch 08)
+
+With the C compiler, vi and INFORMIX installed, compiling a Pascal program made the kernel
+print `dm0d: sensebytes=0<ETYPE=0,ECODE=0,...> blkno=33280` and then kill processes with
+`no swap space`. The failing command was a seek (`op=0b`) that the model had completed
+normally; the sense that followed was all zeros.
+
+The driver reads the command status from register 1, and the model built it from the byte
+at `0x0fe782`, where the Storager firmware posts its verdict into the host IOPB. Rigid disk
+commands at run time are completed in line by the model and never go through the
+firmware, so that byte was whatever the host memory held. At boot it still held the last
+firmware completion (`0x80`); once the kernel gave that page to a user process, any other
+value read as an error. Sense also wrote `0x80` there to make its own status look clean,
+which wrote into that process's memory.
+
+Fix: commands completed in line report success themselves and nothing is written to host
+memory. Firmware-backed commands (the floppy) still report the firmware's verdict.
+
 ## The installation
 
 The installer switches the machine off halfway, as on the real hardware, so

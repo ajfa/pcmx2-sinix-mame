@@ -1,0 +1,62 @@
+diff --git a/src/devices/bus/multibus/storager.cpp b/src/devices/bus/multibus/storager.cpp
+--- a/src/devices/bus/multibus/storager.cpp
++++ b/src/devices/bus/multibus/storager.cpp
+@@ -601,6 +601,7 @@
+ 	// Rigid setup→done pair.  Done IRQ5 is held until $7BA8 has RTEd (IPL was ≥5, then <5)
+ 	// so $8018 sees a finished $741e/$741c, not a half-built slot.
+ 	bool m_rigid_done_owed = false;
++	bool m_ioreg_sync = false;      // last OS command completed in-line (no firmware post)
+ 	bool m_rigid_setup_live = false;
+ 	bool m_rigid_saw_setup_ipl = false;
+ 	bool m_rigid_setup_rte = false;
+@@ -4317,7 +4318,11 @@
+ 		// validated), so the driver was told every command succeeded even when the firmware had
+ 		// posted an error.  Report the firmware's own verdict: it DMAs the status into the host
+ 		// IOPB at +2 (0x80 = complete, 0x82 = error with the code at +3).
+-		u8 const st = m_bus->space(AS_PROGRAM).read_byte((0x0fe780 + 2) & 0xffffff);
++		// Only firmware-backed commands post there.  Commands completed in-line (the rigid disk
++		// channel, sense, status) never do, and at run time the kernel hands that page to user
++		// processes: under memory pressure the byte holds user data and the driver saw random
++		// errors with an all-zero sense (dm0d: sensebytes=0, then "no swap space").
++		u8 const st = m_ioreg_sync ? 0x80 : m_bus->space(AS_PROGRAM).read_byte((0x0fe780 + 2) & 0xffffff);
+ 		v = (v & 0x00ff) | (u16(st == 0x80 ? 0x00 : (st & 0x03)) << 8);
+ 	}
+ 	return v;
+@@ -4340,6 +4345,7 @@
+ 		if (rst || (falling && !(r0cmd & 0x01)))
+ 			return;
+ 		m_ioreg_done = false;           // new command: DONE drops until it completes
++		m_ioreg_sync = false;
+ 		// RELEASE ANY STALE COMPLETION INTERRUPT.  The acknowledge path in ioreg_r is gated on
+ 		// m_ioreg_done, so if the driver issues its NEXT command before reading the status of
+ 		// the previous one, that interrupt can never be acked: INT2 stays asserted and
+@@ -4504,10 +4510,9 @@
+ 				// IOPB at 0x0fe780 still reads +2=82 +3=1c from the write that just failed, because
+ 				// only firmware-backed completions (HOST POST) refresh it - a synchronous command
+ 				// inherits the previous verdict.  The driver reads that, treats the sense fetch as
+-				// failed, and never loads the buffer (4 reads against 103 commands).  Post a clean
+-				// completion for THIS command so the reply is collectable.
+-				bs.write_byte(0x0fe782, 0x80);
+-				bs.write_byte(0x0fe783, 0x00);
++				// failed, and never loads the buffer (4 reads against 103 commands).  The status read
++				// now reports this command's own in-line completion (m_ioreg_sync), so nothing is
++				// written into host memory, which belongs to the kernel at run time.
+ 				logerror("IOREG SENSE served unit=%u -> %02x %02x 00 00 (fwop %02x, ETYPE=%u ECODE=%X) t=%.5f\n",
+ 					unit, b0, b1, m_last_sense_op, (b0 >> 4) & 7, b0 & 0xf,
+ 					machine().time().as_double());
+@@ -4618,6 +4623,7 @@
+ 				}
+ 				m_ioreg[1] = 0x00;
+ 				m_ioreg_done = true;
++				m_ioreg_sync = true;
+ 				if (m_ioreg_int_timer)
+ 				{
+ 					if (m_ioreg_pending == 0) m_ioreg_pending = 1;
+@@ -4844,6 +4850,7 @@
+ 		{
+ 			m_ioreg[1] = 0x00;
+ 			m_ioreg_done = true;
++			m_ioreg_sync = true;
+ 			// cmd bit0 = INTERRUPT-DRIVEN: count the completion and arm the deferred INT2
+ 			// (Multibus INT2 -> CPUAP ICU IR3 = the kernel's sa handler).  Deferred 500us so it
+ 			// cannot arrive before the driver reaches its wait.  Polled commands (bit0 = 0, which

@@ -42,6 +42,7 @@ Against `storager-lle` at `0147a62a34d` (21 August 2026), applied in order:
 | `05-ns32000-rett-sb.patch` | NS32000: `RETT` and `RETI` read the module descriptor with the restored PSR; without it `init` starts with the kernel's SB and dies |
 | `06-s97801-terminal.patch` | The Siemens 97801 terminal, keyboard and layout from MAME master, as an RS-232 option for the SERAD console port |
 | `07-pcmx2-working.patch` | Drops `MACHINE_NOT_WORKING` from `pcmx2` |
+| `08-storager-inline-status.patch` | Rigid disk commands report their own completion instead of a byte in host memory that the kernel gives to user processes; without it, swapping under memory pressure fails at random (`dm0d: sensebytes=0`, then `no swap space`) |
 
 Patches 04 and 05 change devices that other MAME machines use (pc532 among them); they
 were only run with the PC-MX2. How each problem was found is in
