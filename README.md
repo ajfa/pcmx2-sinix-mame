@@ -24,10 +24,24 @@ SINIX0 to SINIX7, two copies of the base distribution.
   get the SINIX menu. `root`, `gast` and `uucp` share the `admin` password hash.
 - The 97801 terminal in the MAME window with MAME's natural keyboard, and a clean
   shutdown with `/etc/haltsys`.
+- Four software products from the same archive, installed with SINIX's own product
+  installer: the C development system (CES), vi, csh, nroff and friends (OBG),
+  INFORMIX-SQL (INFDE) and Pascal-XT. `cc` and `pc` compile and run programs.
 
-Not looked at: tape, Ethernet (ExeLAN), the supplements (S3510 service floppies, CES,
-MES and the others in Tenox's archive). A warm restart after a floppy boot does not always
-find the floppy again; see [docs/NOTES.md](docs/NOTES.md).
+Not looked at: tape, Ethernet (ExeLAN), the networking products (FTSINI, LAN1, REMOS,
+EMDS), the S3510 service floppies and SINIX V2.1A (V21A). MES needs three example users
+created by hand before its installer runs and was left out. vi is installed but was not
+tried on the 97801 screen.
+
+Known problems:
+
+- Now and then the boot stops right after the kernel is loaded
+  (`125952+18200+9640=153792d=258C0x`) and nothing else happens; closing MAME and
+  starting again gets past it. Not tracked down. MAME starts the MC146818 clock without
+  saved contents and SINIX says `/etc/mc: Uhr kann nicht gelesen werden`; that clock also
+  drives the 50 Hz system tick, so it is a suspect, nothing more.
+- A warm restart after a floppy boot does not always find the floppy again; see
+  [docs/NOTES.md](docs/NOTES.md).
 
 ## The patches
 
@@ -51,7 +65,7 @@ were only run with the PC-MX2. How each problem was found is in
 ## Layout
 
     patches/    the changes to MAME, in order
-    harness/    build (Linux and MSYS2), unattended install and login check
+    harness/    build (Linux and MSYS2), unattended install, login check, software products
     tools/      reading files from the installed disk, and the termcap patch
     pack/       launchers, boot helper and README of the Windows pack
     docs/       what was measured and fixed
@@ -90,6 +104,27 @@ Before using the disk with the 97801 in a window, run
 It makes the console use the German key table with the ASCII display set, which is what
 MAME's natural keyboard sends. SINIX asks for the date at every boot: answer with year
 86 (`86MMDDhhmm`), because a two digit 26 is 1926, before the Unix epoch.
+
+## Software products
+
+With an installed disk in `work/s1/hd.img`:
+
+    harness/products.py s1 CES1 OBG1 INFDE1 PASXT1
+
+logs in as `admin`, opens Systemverwaltung, "i - Installation von Softwareprodukten", and
+for each product inserts its first floppy and every other floppy its install script asks
+for. Each name is the VOL1 label of the product's first floppy; the IMD files are found
+by label in `floppies/set1/` and `floppies/set2/`. About 20 minutes for the four.
+
+    harness/products.py s1 root commands.txt
+
+logs in as `root` and types one shell command per line; end the file with `/etc/haltsys`
+so the disk is left clean.
+
+The OBG floppies in Tenox's archive are a 1986 copy labelled `OBG-1` to `OBG-3`, while
+their install script checks for `OBG1` to `OBG3`. `products.py` relabels its scratch copy;
+pass `OBG1`. The installer also has a fallback for floppies whose first cylinders hold no
+`install` file and finds it in the main archive, so that part needs nothing.
 
 ## Windows pack
 

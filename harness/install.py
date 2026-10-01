@@ -71,18 +71,23 @@ class Machine:
             cmd += ["-flop", floppy]
         env = {k: v for k, v in os.environ.items() if k not in ("DISPLAY", "WAYLAND_DISPLAY", "XDG_SESSION_TYPE")}
         env.update(SDL_VIDEODRIVER="dummy", SDL_AUDIODRIVER="dummy", FLCTL=self.ctl)
-        pts = lambda: {e for e in os.listdir("/dev/pts") if e.isdigit()}
-        before = pts()
         self.p = subprocess.Popen(cmd, cwd=WORK, stdout=open(os.path.join(WORK, f"mame-{phase}.out"), "wb"),
                                   stderr=subprocess.STDOUT, env=env)
+        # MAME's own pty, from the tty-index of its /dev/ptmx descriptor: a diff of /dev/pts
+        # picks up ptys that other programs open at the same time
         slave = None
         for _ in range(120):
             time.sleep(1)
-            d = pts() - before
-            if d:
-                slave = "/dev/pts/" + sorted(d)[0]
-                break
-            if self.p.poll() is not None:
+            fdd = f"/proc/{self.p.pid}/fd"
+            try:
+                for fd in os.listdir(fdd):
+                    if os.readlink(os.path.join(fdd, fd)) == "/dev/ptmx":
+                        for line in open(f"/proc/{self.p.pid}/fdinfo/{fd}"):
+                            if line.startswith("tty-index:"):
+                                slave = "/dev/pts/" + line.split()[1]
+            except OSError:
+                pass
+            if slave or self.p.poll() is not None:
                 break
         if not slave:
             say(f"{phase}: MAME opened no pty")
@@ -215,7 +220,7 @@ def phase_verify():
         time.sleep(1)
         if m.find(r"sasiopen: no label SINIX found\s*\n:"):
             m.send("sa(1,0)sinix\r", "loader prompt, boot from disk")
-        if m.find(r"Zeit eingeben \[jj\]"):
+        if m.find(r"eingeben \[jj\]"):
             m.send(time.strftime("86%m%d%H%M") + "\r", "date, year 1986")
         if m.find(r"Benutzerkennung:|login:"):
             say("V: login prompt")
@@ -251,7 +256,7 @@ def phase_b():
             say(f"B: installer says wrong diskette (wanted {wanted})")
         if m.find(r"RESTOR-Diskette[\s\S]*?eingelesen werden \? \(j/n\)"):
             m.send("n\r", "no RESTOR diskette (fresh install)")
-        if m.find(r"Zeit eingeben \[jj\]"):
+        if m.find(r"eingeben \[jj\]"):
             # today's day and time with a 1986 year: a two-digit 26 would be 1926, before the epoch
             m.send(time.strftime("86%m%d%H%M") + "\r", "date, year 1986")
         if m.find(r"Auswahl des Tastaturtyps"):

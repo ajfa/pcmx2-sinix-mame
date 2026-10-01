@@ -50,6 +50,28 @@ Scroll Lock switches between "the keyboard goes to SINIX" and "the keyboard goes
 (in that mode Tab opens the MAME menu). To quit, close the window.
 
 
+SOFTWARE PRODUCTS
+-----------------
+
+If the disk was set up with harness/products.py, it also has, installed with SINIX's own
+product installer (admin, Systemverwaltung, "i - Installation von Softwareprodukten"):
+
+  CES-I-A V2.0      C development system: cc, as, ld, adb, lex, yacc, make, the headers
+                    in /usr/include and SCCS (admin, get, delta...).
+  OBG V2.0          vi, ex, csh, nroff, tbl, neqn, spell, cpio, dd, od, cut, finger and
+                    other tools, with the curses library.
+  INFDEV V2.00      INFORMIX-SQL: isql (SQL menus), perform (screens), ace (reports) and
+                    esqlc (SQL in C).
+  PASCAL-XT V1.0A   Pascal compiler: pc program.p leaves the program in a.out.
+
+To try it, as root:
+
+  cd /tmp
+  echo 'main(){puts("hello");}' > h.c
+  cc -o h h.c
+  ./h
+
+
 SHUTTING DOWN PROPERLY
 ----------------------
 
@@ -80,6 +102,9 @@ MESSAGES THAT LOOK LIKE ERRORS AND ARE NORMAL
 
   Automatischer Wiederanlauf beginnt...
       "Automatic restart", after that check. Normal.
+
+  Nothing after "125952+18200+9640=153792d=258C0x"
+      Now and then the boot stops there. Close the window and start again.
 
   The date shows 1986
       On purpose: SINIX V2.0 keeps the year in two digits and 2026 does not fit. Today's
